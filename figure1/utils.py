@@ -13,6 +13,7 @@ from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import random_ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.layers import utils
+import numpy as np
 import tensorflow as tf
 
 # (1) scale inputs to zero mean and unit variance
@@ -46,7 +47,7 @@ def dropout_selu(x, rate, alpha= -1.7580993408473766, fixedPointMean=0.0, fixedP
         keep_prob.get_shape().assert_is_compatible_with(tensor_shape.scalar())
 
         alpha = ops.convert_to_tensor(alpha, dtype=x.dtype, name="alpha")
-        alpha.get_shape().assert_is_compatible_with(tensor_shape.scalar())
+        keep_prob.get_shape().assert_is_compatible_with(tensor_shape.scalar())
 
         if tensor_util.constant_value(keep_prob) == 1:
             return x
@@ -68,3 +69,59 @@ def dropout_selu(x, rate, alpha= -1.7580993408473766, fixedPointMean=0.0, fixedP
         return utils.smart_cond(training,
             lambda: dropout_selu_impl(x, rate, alpha, noise_shape, seed, name),
             lambda: array_ops.identity(x))
+
+
+def get_timestamp(fmt='%y%m%d_%H%M'):
+    '''Returns a string that contains the current date and time.
+
+    Suggested formats:
+        short_format=%y%m%d_%H%M  (default)
+        long format=%Y%m%d_%H%M%S
+    '''
+    import datetime
+    now = datetime.datetime.now()
+    return datetime.datetime.strftime(now, fmt)
+
+
+def generate_slices(n, slice_size, allow_smaller_final_batch=True):
+    """Generates slices of given slice_size up to n"""
+    start, end = 0, 0
+    for pack_num in range(int(n / slice_size)):
+        end = start + slice_size
+        yield slice(start, end, None)
+        start = end
+    # last slice might not be a full batch
+    if allow_smaller_final_batch:
+        if end < n:
+            yield slice(end, n, None)
+
+
+def generate_minibatches(batch_size, ph_list, data_list, n_epochs=1,
+                         allow_smaller_final_batch=False, shuffle=True,
+                         feed_dict=None):
+    cnt_epochs = 0
+    assert len(ph_list) == len(data_list), "Passed different number of data and placeholders"
+    assert len(data_list) >= 0, "Passed empty lists"
+
+    n_samples = data_list[0].shape[0]
+    n_items = len(data_list)
+
+    while True:
+        if shuffle:
+            idx = np.arange(n_samples)
+            np.random.shuffle(idx)
+            for i in range(n_items):
+                data_list[i] = data_list[i][idx]
+
+        if feed_dict is None:
+                feed_dict = {}
+
+        for s in generate_slices(n_samples, batch_size, allow_smaller_final_batch):
+            for i in range(n_items):
+                ph = ph_list[i]
+                d = data_list[i][s]
+                feed_dict[ph] = d
+            yield feed_dict
+        cnt_epochs += 1
+        if n_epochs is not None and cnt_epochs >= n_epochs:
+            break
